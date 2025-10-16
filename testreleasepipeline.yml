@@ -1,0 +1,114 @@
+# Test Release Pipeline
+# This pipeline deploys the Test application to different environments
+name: Test Deployment
+
+trigger: none # Manual trigger
+pr: none
+
+parameters:
+  # Environment
+  - name: environment
+    displayName: "Base Environment Type"
+    type: string
+    default: "dev"
+    values: [dev, uat, prod]
+
+  # Workspace/Variable Group
+  - name: workspaceName
+    displayName: "Workspace Name (Variable Group)"
+    type: string
+    default: "dev"
+
+  # Azure Service Connection
+  - name: serviceConnection
+    displayName: "Azure Service Connection"
+    type: string
+    default: "DevTest Service Connection"
+    values:
+      - "DevTest Service Connection"
+      - "Custom (specify below)"
+
+  - name: customServiceConnection
+    displayName: "Custom Service Connection Name (only if 'Custom' selected)"
+    type: string
+    default: "none"
+
+  # ⚡ Action
+  - name: action
+    displayName: "⚡ Action"
+    type: string
+    default: "deploy"
+    values: [deploy, restart]
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  - name: artifactName
+    value: 'drop'
+  # Load Variable Group (Key Vault-backed secrets)
+  # This includes: az-service-connection, docker credentials, redis, sql, etc.
+  - group: ${{ parameters.workspaceName }}
+
+  # Load environment-specific configuration
+  - template: environment/${{ parameters.environment }}.yml
+
+  # Override service connection based on selection
+  - ${{ if eq(parameters.serviceConnection, 'Custom (specify below)') }}:
+      - ${{ if ne(parameters.customServiceConnection, 'none') }}:
+          - name: az-service-connection
+            value: "${{ parameters.customServiceConnection }}"
+  - ${{ else }}:
+      # Use the selected service connection name directly
+      - name: az-service-connection
+        value: "${{ parameters.serviceConnection }}"
+
+stages:
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 1: Deploy Test Web Application
+  # ═══════════════════════════════════════════════════════════════
+  - stage: DeployTestWeb
+    displayName: "Deploy Test Stage"
+    jobs:
+      - job: DeployApplication
+        displayName: "Deploy Test Application"
+        steps:
+          # Deploy Test Web App
+          - task: AzureCLI@2
+            displayName: "Deploy Test Web App"
+            inputs:
+              azureSubscription: ${{ variables['az-service-connection'] }}
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                [ "${{ parameters.action }}" != "deploy" ] && exit 0
+
+                WEB_APP_NAME="$(mt-web-app-name)"
+                RESOURCE_GROUP="$(resource-group-name)"
+
+                if [ -z "$WEB_APP_NAME" ] || [ -z "$RESOURCE_GROUP" ]; then
+                  echo "Web app name or resource group missing from variable group - skipping"
+                  exit 0
+                fi
+
+                ARTIFACTS_ZIP="$(Build.SourcesDirectory)/artifacts/Test.Web.zip"
+
+                if [ ! -f "$ARTIFACTS_ZIP" ]; then
+                  echo "Test artifact not found: $ARTIFACTS_ZIP - skipping"
+                  exit 0
+                fi
+
+                echo "Deploying Test Web App..."
+                echo "  Web App: $WEB_APP_NAME"
+                echo "  Resource Group: $RESOURCE_GROUP"
+                echo "  Artifact: $ARTIFACTS_ZIP"
+
+                az webapp deploy \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --name "$WEB_APP_NAME" \
+                  --src-path "$ARTIFACTS_ZIP" \
+                  --type zip \
+                  --restart true
+
+                HOSTNAME=$(az webapp show -g "$RESOURCE_GROUP" -n "$WEB_APP_NAME" --query defaultHostName -o tsv)
+                echo "Test deployed → https://$HOSTNAME"
