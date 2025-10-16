@@ -1,0 +1,23 @@
+variables:
+  - name: environment
+    value: "dev"
+
+  # Azure Service Connection (OIDC authentication)
+  # Override via pipeline parameter if needed
+  - name: az-service-connection
+    value: "DevTest Service Connection"
+
+  # Kubernetes Configuration
+  - name: kubernetesNamespace
+    value: "develop"
+
+  - name: dockerRegistry
+    value: "omnipark"
+
+  # Variable Group Values (from Key Vault)
+  # All secrets automatically available from the variable group:
+  # - docker-username, docker-password, docker-email
+  # - redis-hostname, redis-port, redis-primary-access-key
+  # - sql-fqdn, sql-admin-login, sql-admin-password
+  # - resource-group-name, aks-cluster-name
+  # - dummy-sendgrid-key
